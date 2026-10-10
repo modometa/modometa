@@ -9,15 +9,21 @@ primary_region = 'lax'
 [build]
   dockerfile = 'Dockerfile'
 
+[restart]
+  policy = "always"
+  max_retries = 10
+
 [env]
   CSRF_TRUSTED_ORIGINS = 'https://*.fly.dev,https://modometa.com,https://www.modometa.com'
   DATABASE_PATH = '/app/modometa.db'
+  DATABASE_READ_ONLY = 'true'
   DJANGO_SETTINGS_MODULE = 'config.settings.prod'
+  GUNICORN_BACKLOG = '128'
   GUNICORN_MAX_REQUESTS = '1000'
   GUNICORN_MAX_REQUESTS_JITTER = '100'
   GUNICORN_THREADS = '4'
-  GUNICORN_TIMEOUT = '60'
-  GUNICORN_WORKERS = '1'
+  GUNICORN_TIMEOUT = '30'
+  GUNICORN_WORKERS = '2'
   KNN_INDEX_PATH = '/app/data/knn_index.npz'
   PORT = '8000'
   R2_PUBLIC_URL = 'https://data.modometa.com'
@@ -43,8 +49,8 @@ primary_region = 'lax'
 
 # https://fly.io/docs/machines/guides-examples/machine-sizing/
 [[vm]]
-  size = 'shared-cpu-1x'
-  memory = '1024mb'
+  size = 'shared-cpu-2x'
+  memory = '2048mb'
   cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 1024
+  cpus = 2
+  memory_mb = 2048

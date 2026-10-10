@@ -145,6 +145,9 @@ jobs:
       - name: Rebuild kNN similarity index
         run: uv run modometa build_knn
 
+      - name: Build search index
+        run: uv run modometa build_search_index
+
       - name: Optimize SQLite database
         run: |
           echo "Optimizing SQLite database (VACUUM and ANALYZE)..."
@@ -157,7 +160,7 @@ jobs:
           zstd -3 -f -T0 modometa.db -o modometa.db.zst
           ls -lh modometa.db.zst
 
-      - name: Upload updated database and kNN index to Cloudflare R2
+      - name: Upload updated database and indices to Cloudflare R2
         run: |
           echo "Uploading modometa.db.zst to R2..."
           aws s3 cp modometa.db.zst "s3://${R2_BUCKET}/modometa.db.zst" --endpoint-url "$R2_ENDPOINT"
@@ -168,6 +171,11 @@ jobs:
           if [ -f data/knn_index.npz ]; then
             echo "Uploading knn_index.npz to R2..."
             aws s3 cp data/knn_index.npz "s3://${R2_BUCKET}/knn_index.npz" --endpoint-url "$R2_ENDPOINT"
+          fi
+
+          if [ -f data/search_index.json ]; then
+            echo "Uploading search_index.json to R2..."
+            aws s3 cp data/search_index.json "s3://${R2_BUCKET}/search_index.json" --endpoint-url "$R2_ENDPOINT"
           fi
 
       - name: Restart Fly.io application
