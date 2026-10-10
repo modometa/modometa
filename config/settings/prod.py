@@ -27,14 +27,14 @@ CSRF_TRUSTED_ORIGINS = [
 # Zero-write cookie sessions (no database writes needed for visitors)
 SESSION_ENGINE = "django.contrib.sessions.backends.signed_cookies"
 
-# In-memory application cache (5000 entries ~50MB RAM, safe for 1GB container)
+# In-memory application cache (1500 entries ~150MB RAM, safe for container memory limits)
 # https://docs.djangoproject.com/en/dev/topics/cache/
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "modometa-prod-cache",
         "OPTIONS": {
-            "MAX_ENTRIES": 5_000,
+            "MAX_ENTRIES": 1_500,
             "CULL_FREQUENCY": 3,
         },
     }
@@ -60,15 +60,36 @@ STORAGES = {
 
 # Configurable database path
 DATABASE_PATH = os.environ.get("DATABASE_PATH", str(BASE_DIR / "modometa.db"))
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": DATABASE_PATH,
-        "OPTIONS": {
-            "timeout": 30,
-        },
+DATABASE_READ_ONLY = os.environ.get("DATABASE_READ_ONLY", "false").lower() == "true"
+
+if DATABASE_READ_ONLY:
+    # Use SQLite URI with mode=ro and immutable=1 to completely bypass POSIX locking,
+    # skip database header change-counter checks, and prevent write attempts.
+    db_name = (
+        DATABASE_PATH
+        if DATABASE_PATH.startswith("file:")
+        else f"file:{DATABASE_PATH}?mode=ro&immutable=1"
+    )
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": db_name,
+            "OPTIONS": {
+                "uri": True,
+                "timeout": 30,
+            },
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": DATABASE_PATH,
+            "OPTIONS": {
+                "timeout": 30,
+            },
+        }
+    }
 
 # Configurable kNN index path
 KNN_INDEX_PATH = Path(

@@ -112,4 +112,5 @@ DEFAULT_DECKLIST_DIR = BASE_DIR.parent / "modometa-mtgo-data" / "Tournaments" / 
 DEFAULT_COMMUNITY_DATA_DIR = BASE_DIR.parent / "modometa-community-data" / "datasources"
 KNN_INDEX_PATH = BASE_DIR / "data" / "knn_index.npz"
 SEARCH_INDEX_PATH = BASE_DIR / "data" / "search_index.json"
+DATABASE_READ_ONLY = False
 IS_TESTING = False
