@@ -38,12 +38,17 @@ CARD_TYPE_CATEGORIES: list[tuple[str, str, str]] = [
 ]
 
 
-def public_cache(cdn_seconds: int = 3600, browser_seconds: int = 300):
+def public_cache(
+    cdn_seconds: int = 3600,
+    browser_seconds: int = 300,
+    stale_error_seconds: int = 86400 * 3,
+):
     """Cache view output in LocMemCache and emit Cloudflare & browser caching headers.
 
     - Server: Caches full rendered response in LocMemCache (unless IS_TESTING is True).
     - Browser: Cache-Control: max-age=<browser_seconds>
-    - CDN (Cloudflare): Cache-Control: s-maxage=<cdn_seconds> and Cloudflare-CDN-Cache-Control.
+    - CDN (Cloudflare): Cache-Control: s-maxage=<cdn_seconds>, stale-if-error=<stale_error_seconds>
+      and Cloudflare-CDN-Cache-Control.
     """
 
     def decorator(view_func):
@@ -61,18 +66,35 @@ def public_cache(cdn_seconds: int = 3600, browser_seconds: int = 300):
                     return cached_response
 
             response = view_func(request, *args, **kwargs)
+            if hasattr(response, "render") and callable(response.render):
+                response.render()
 
             if response.status_code == 200:
-                patch_cache_control(
-                    response,
-                    public=True,
-                    max_age=browser_seconds,
-                    s_maxage=cdn_seconds,
+                # Allow views to override cache durations by setting attributes on the response object
+                # This allows us to set very long cache durations on old tournaments/decks
+                # that will never change again.
+                actual_cdn_seconds = getattr(response, "_cdn_seconds", cdn_seconds)
+                actual_browser_seconds = getattr(
+                    response, "_browser_seconds", browser_seconds
                 )
-                response["Cloudflare-CDN-Cache-Control"] = f"max-age={cdn_seconds}"
+                actual_stale_error_seconds = getattr(
+                    response, "_stale_error_seconds", stale_error_seconds
+                )
+                cache_control_kwargs = {
+                    "public": True,
+                    "max_age": actual_browser_seconds,
+                    "s_maxage": actual_cdn_seconds,
+                }
+                cf_directives = [f"max-age={actual_cdn_seconds}"]
+                if actual_stale_error_seconds:
+                    cache_control_kwargs["stale_if_error"] = actual_stale_error_seconds
+                    cf_directives.append(f"stale-if-error={actual_stale_error_seconds}")
+
+                patch_cache_control(response, **cache_control_kwargs)
+                response["Cloudflare-CDN-Cache-Control"] = ", ".join(cf_directives)
 
                 if not is_testing:
-                    cache.set(cache_key, response, timeout=cdn_seconds)
+                    cache.set(cache_key, response, timeout=actual_cdn_seconds)
 
             return response
 

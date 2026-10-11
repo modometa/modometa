@@ -1,6 +1,7 @@
 """Standard HTML and JSON views for Modometa."""
 
 from collections import Counter
+from datetime import date
 from datetime import timedelta
 
 from django.conf import settings
@@ -351,7 +352,7 @@ def tournament_detail(request, format, event):
             decks, is_challenge=(event_type == "challenge")
         )
 
-    return render(
+    response = render(
         request,
         "tournament_detail.html",
         {
@@ -361,8 +362,14 @@ def tournament_detail(request, format, event):
         },
     )
 
+    # Tournaments older than 30 days are static historical records; cache for 7 days on CDN
+    if tournament.date and (date.today() - tournament.date).days > 30:
+        response._cdn_seconds = 86400 * 7
 
-@public_cache(cdn_seconds=3600, browser_seconds=180)
+    return response
+
+
+@public_cache(cdn_seconds=86400, browser_seconds=300)
 def player_detail(request, player):
     """Player detail view: Lifetime tournament history across formats."""
     player_clean = player.strip()
@@ -587,7 +594,7 @@ def card_detail(request, slug):
     )
 
 
-@public_cache(cdn_seconds=3600, browser_seconds=300)
+@public_cache(cdn_seconds=86400 * 7, browser_seconds=300)
 def deck_detail(request, player, event, deck_index=1):
     """Deck detail view: Displays mainboard, sideboard, Scryfall previews, and kNN similarities."""
     player_lower = player.strip().lower()
