@@ -9,7 +9,7 @@ primary_region = 'lax'
 [build]
   dockerfile = 'Dockerfile'
 
-[restart]
+[[restart]]
   policy = "always"
   max_retries = 10
 
@@ -43,7 +43,8 @@ primary_region = 'lax'
   [[http_service.checks]]
     interval = '15s'
     timeout = '5s'
-    grace_period = '180s'
+    # Grace period has a max of 1 minute
+    grace_period = '60s'
     method = 'GET'
     path = '/healthz'
 
