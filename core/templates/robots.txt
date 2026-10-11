@@ -7,12 +7,15 @@
 # https://github.com/davidfischer/modometa
 
 User-agent: *
-Allow: /
 Crawl-delay: 2
 
 # Because this site has tens of thousands of players
 # and hundreds of thousands of decks,
 # scrapers will find tons of pages to scrape.
 # Let's just tell them politely to only scrape the root pages
+# This should keep our crawl budget focused on the main pages (format/archetype/matrix)
 Disallow: /player/
 Disallow: /*/tournaments/
+Disallow: /card/
+
+Sitemap: https://modometa.com/sitemap.xml

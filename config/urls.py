@@ -2,12 +2,16 @@
 
 from django.conf import settings
 from django.contrib import admin
+from django.contrib.sitemaps.views import sitemap
 from django.http import HttpResponse
 from django.urls import include
 from django.urls import path
 from django.views import defaults as default_views
 from django.views.generic import RedirectView
 from django.views.generic import TemplateView
+
+from core.sitemaps import sitemaps
+from core.views.utils import public_cache
 
 
 admin_path = getattr(settings, "DJANGO_ADMIN_PATH", "")
@@ -20,6 +24,12 @@ urlpatterns = [
         "robots.txt",
         TemplateView.as_view(template_name="robots.txt", content_type="text/plain"),
         name="robots_txt",
+    ),
+    path(
+        "sitemap.xml",
+        public_cache(cdn_seconds=86400, browser_seconds=3600)(sitemap),
+        {"sitemaps": sitemaps},
+        name="sitemap",
     ),
     path(
         "favicon.ico",

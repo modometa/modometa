@@ -643,3 +643,43 @@ def test_tournament_list_og_image_view(client, sample_data):
 
     # Test invalid format returns 404
     assert client.get("/invalidformat/tournaments/og.png").status_code == 404
+
+
+@pytest.mark.django_db
+def test_sitemap_endpoint(client, sample_data):
+    """Test sitemap.xml returns valid XML with core pages, format hubs, and archetypes."""
+    response = client.get("/sitemap.xml")
+    assert response.status_code == 200
+    assert "xml" in response["Content-Type"]
+    content = response.content.decode("utf-8")
+
+    # Structure
+    assert '<?xml version="1.0" encoding="UTF-8"?>' in content
+    assert "<urlset" in content
+
+    # Core pages
+    assert "<loc>https://testserver/</loc>" in content
+    assert "<loc>https://testserver/faq/</loc>" in content
+
+    # Format hub, matrix, leaderboard
+    assert "<loc>https://testserver/legacy/</loc>" in content
+    assert "<loc>https://testserver/legacy/matrix/</loc>" in content
+    assert "<loc>https://testserver/legacy/leaderboard/</loc>" in content
+
+    # Seeded archetype from sample_data
+    assert "<loc>https://testserver/legacy/archetype/dimir-murktide/</loc>" in content
+    assert "<changefreq>weekly</changefreq>" in content
+
+    # Disallowed deep routes should NOT be in the sitemap
+    assert "/player/" not in content
+    assert "/tournaments/" not in content
+    assert "/card/" not in content
+
+
+@pytest.mark.django_db
+def test_robots_txt_sitemap_reference(client):
+    """Test robots.txt includes reference to sitemap.xml."""
+    response = client.get("/robots.txt")
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    assert "Sitemap: https://modometa.com/sitemap.xml" in content

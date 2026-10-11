@@ -2327,6 +2327,10 @@ def test_robots_txt_endpoint(client):
     assert "text/plain" in response.headers["content-type"]
     assert b"User-agent: *" in response.content
     assert b"Crawl-delay: 2" in response.content
+    assert b"Disallow: /player/" in response.content
+    assert b"Disallow: /*/tournaments/" in response.content
+    assert b"Disallow: /card/" in response.content
+    assert b"Sitemap: https://modometa.com/sitemap.xml" in response.content
 
 
 def test_favicon_endpoint(client):
@@ -2337,7 +2341,7 @@ def test_favicon_endpoint(client):
 
 
 def test_public_cache_decorator():
-    """public_cache decorator should emit public, browser max-age, and matching CDN max-age."""
+    """public_cache decorator should emit public, browser max-age, matching CDN max-age, and stale-if-error."""
     rf = RequestFactory()
 
     @public_cache(cdn_seconds=7200, browser_seconds=120)
@@ -2349,7 +2353,11 @@ def test_public_cache_decorator():
     assert "public" in response.headers["Cache-Control"]
     assert "max-age=120" in response.headers["Cache-Control"]
     assert "s-maxage=7200" in response.headers["Cache-Control"]
-    assert response.headers["Cloudflare-CDN-Cache-Control"] == "max-age=7200"
+    assert "stale-if-error=259200" in response.headers["Cache-Control"]
+    assert (
+        response.headers["Cloudflare-CDN-Cache-Control"]
+        == "max-age=7200, stale-if-error=259200"
+    )
 
 
 @pytest.mark.django_db
@@ -2367,17 +2375,124 @@ def test_cache_headers_emitted(client):
         s_max = re.search(r"s-maxage=(\d+)", cache_control)
         max_age = re.search(r"max-age=(\d+)", cache_control)
         cf_max = re.search(r"max-age=(\d+)", cf_cache)
+        stale_err = re.search(r"stale-if-error=(\d+)", cache_control)
+        cf_stale = re.search(r"stale-if-error=(\d+)", cf_cache)
 
         assert s_max is not None, f"s-maxage missing in Cache-Control for {path}"
         assert max_age is not None, f"max-age missing in Cache-Control for {path}"
         assert cf_max is not None, (
             f"max-age missing in Cloudflare-CDN-Cache-Control for {path}"
         )
+        assert stale_err is not None, (
+            f"stale-if-error missing in Cache-Control for {path}"
+        )
+        assert cf_stale is not None, (
+            f"stale-if-error missing in Cloudflare-CDN-Cache-Control for {path}"
+        )
 
-        # Cloudflare CDN TTL should mirror origin s-maxage directive
+        # Cloudflare CDN TTL should mirror origin directives
         assert s_max.group(1) == cf_max.group(1)
+        assert stale_err.group(1) == cf_stale.group(1)
         assert int(s_max.group(1)) > 0
         assert int(max_age.group(1)) > 0
+        assert int(stale_err.group(1)) > 0
+
+
+@pytest.mark.django_db
+def test_tournament_detail_dynamic_cache_ttl(client):
+    """Old tournaments (>30d) should have 7-day CDN TTL; recent (<=30d) should have 4h."""
+    old_date = date.today() - timedelta(days=45)
+    t_old = Tournament.objects.create(
+        id="legacy-challenge-old-ttl",
+        name="Legacy Challenge Old",
+        format="legacy",
+        event_type="challenge",
+        date=old_date,
+    )
+    resp_old = client.get(f"/legacy/tournaments/{t_old.id}/")
+    assert resp_old.status_code == 200
+    assert "s-maxage=604800" in resp_old.headers["Cache-Control"]
+    assert "stale-if-error=259200" in resp_old.headers["Cache-Control"]
+    assert (
+        resp_old.headers["Cloudflare-CDN-Cache-Control"]
+        == "max-age=604800, stale-if-error=259200"
+    )
+
+    recent_date = date.today() - timedelta(days=5)
+    t_recent = Tournament.objects.create(
+        id="legacy-challenge-recent-ttl",
+        name="Legacy Challenge Recent",
+        format="legacy",
+        event_type="challenge",
+        date=recent_date,
+    )
+    resp_recent = client.get(f"/legacy/tournaments/{t_recent.id}/")
+    assert resp_recent.status_code == 200
+    assert "s-maxage=14400" in resp_recent.headers["Cache-Control"]
+    assert "stale-if-error=259200" in resp_recent.headers["Cache-Control"]
+    assert (
+        resp_recent.headers["Cloudflare-CDN-Cache-Control"]
+        == "max-age=14400, stale-if-error=259200"
+    )
+
+
+@pytest.mark.django_db
+def test_player_detail_cache_ttl(client):
+    """Player detail view should emit 24h CDN TTL (86400s)."""
+    t = Tournament.objects.create(
+        id="legacy-challenge-player-ttl",
+        name="Legacy Challenge",
+        format="legacy",
+        event_type="challenge",
+        date=date(2024, 1, 1),
+    )
+    Deck.objects.create(
+        id="legacy-challenge-player-ttl_deck_1",
+        tournament=t,
+        format="legacy",
+        player="CachingPro",
+        player_lower="cachingpro",
+        archetype="Burn",
+        archetype_slug="burn",
+    )
+    resp = client.get("/player/cachingpro/")
+    assert resp.status_code == 200
+    assert "s-maxage=86400" in resp.headers["Cache-Control"]
+    assert "stale-if-error=259200" in resp.headers["Cache-Control"]
+    assert (
+        resp.headers["Cloudflare-CDN-Cache-Control"]
+        == "max-age=86400, stale-if-error=259200"
+    )
+
+
+@pytest.mark.django_db
+def test_deck_detail_cache_ttl(client):
+    """Deck detail view should emit 7-day CDN TTL (604800s)."""
+    t = Tournament.objects.create(
+        id="legacy-challenge-deck-ttl",
+        name="Legacy Challenge",
+        format="legacy",
+        event_type="challenge",
+        date=date(2024, 1, 1),
+    )
+    Deck.objects.create(
+        id="legacy-challenge-deck-ttl_deck_1",
+        tournament=t,
+        format="legacy",
+        player="DeckMaster",
+        player_lower="deckmaster",
+        archetype="Burn",
+        archetype_slug="burn",
+        mainboard=[{"card": "Lightning Bolt", "count": 4}],
+    )
+    resp = client.get(f"/player/DeckMaster/deck/{t.id}/")
+    assert resp.status_code == 200
+    assert "s-maxage=604800" in resp.headers["Cache-Control"]
+    assert "stale-if-error=259200" in resp.headers["Cache-Control"]
+    assert (
+        resp.headers["Cloudflare-CDN-Cache-Control"]
+        == "max-age=604800, stale-if-error=259200"
+    )
 
 
 @pytest.mark.django_db
