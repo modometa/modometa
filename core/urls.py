@@ -15,6 +15,16 @@ urlpatterns = [
     path("player/<str:player>/og.png", views.player_og_image, name="player_og_image"),
     path("player/<str:player>/", views.player_detail, name="player_detail"),
     path(
+        "player/<str:player>/deck/<str:event>/og.png",
+        views.deck_og_image,
+        name="deck_og_image",
+    ),
+    path(
+        "player/<str:player>/deck/<str:event>/<int:deck_index>/og.png",
+        views.deck_og_image,
+        name="deck_og_image_disambiguated",
+    ),
+    path(
         "player/<str:player>/deck/<str:event>/", views.deck_detail, name="deck_detail"
     ),
     path(

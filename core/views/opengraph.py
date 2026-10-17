@@ -16,6 +16,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.template.loader import render_to_string
 
+from core.engine.knn import get_card_idf_map
 from core.formats import FORMAT_CHOICES
 from core.formats import FORMAT_SLUGS
 from core.formats import FORMATS
@@ -33,6 +34,7 @@ from core.views.charts import build_tournament_archetype_chart
 from core.views.charts import build_tournament_list_archetype_chart
 from core.views.charts import get_archetype_matrix_data
 from core.views.charts import tournament_deck_sort_key
+from core.views.utils import get_cards_map
 from core.views.utils import get_reference_date
 from core.views.utils import get_timeframe_cutoff
 from core.views.utils import parse_timeframe
@@ -722,20 +724,7 @@ def card_og_image(request, card):
     if not card_obj:
         raise Http404(f"Card '{card_query}' not found.")
 
-    cache_key = f"card_og_img_data_uri:{card_obj.id}"
-    image_data_uri = cache.get(cache_key)
-    if not image_data_uri and card_obj.image_uri:
-        try:
-            headers = {"User-Agent": get_user_agent()}
-            with httpx.Client(timeout=5.0, follow_redirects=True) as client:
-                resp = client.get(card_obj.image_uri, headers=headers)
-                if resp.status_code == 200:
-                    content_type = resp.headers.get("content-type", "image/jpeg")
-                    b64_img = base64.b64encode(resp.content).decode("ascii")
-                    image_data_uri = f"data:{content_type};base64,{b64_img}"
-                    cache.set(cache_key, image_data_uri, timeout=604800)
-        except Exception:
-            image_data_uri = None
+    image_data_uri = _fetch_card_image_data_uri(card_obj)
 
     supported_slugs = getattr(settings, "MODOMETA_FORMATS", FORMAT_SLUGS)
     choices_dict = dict(FORMAT_CHOICES)
@@ -858,6 +847,248 @@ def card_og_image(request, card):
             "top_format_display": top_format_display,
             "legalities_display": legalities_display,
             "mana_pill": mana_pill,
+        },
+        request=request,
+    )
+
+
+def _fetch_card_image_data_uri(card_obj: Card | None) -> str | None:
+    """Fetch and cache a Scryfall card image as a base64 data URI for SVG embedding."""
+    if not card_obj:
+        return None
+    cache_key = f"card_og_img_data_uri:{card_obj.id}"
+    image_data_uri = cache.get(cache_key)
+    if not image_data_uri and card_obj.image_uri:
+        try:
+            headers = {"User-Agent": get_user_agent()}
+            with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+                resp = client.get(card_obj.image_uri, headers=headers)
+                if resp.status_code == 200:
+                    content_type = resp.headers.get("content-type", "image/jpeg")
+                    b64_img = base64.b64encode(resp.content).decode("ascii")
+                    image_data_uri = f"data:{content_type};base64,{b64_img}"
+                    cache.set(cache_key, image_data_uri, timeout=604800)
+        except Exception:
+            image_data_uri = None
+    return image_data_uri
+
+
+def _extract_card_mana_symbols(card_obj: Card | None) -> list[str]:
+    """Return ordered mana symbol IDs (e.g. ['mana-u', 'mana-b']) for a non-land card."""
+    if not card_obj or card_obj.is_land:
+        return []
+    raw_colors = card_obj.colors or card_obj.color_identity or []
+    unique_chars = {c.upper() for c in raw_colors if c.upper() in COLOR_ORDER}
+    if not unique_chars:
+        return ["mana-c"]
+    sorted_chars = sorted(unique_chars, key=lambda c: COLOR_ORDER.get(c, 99))
+    return [f"mana-{c.lower()}" for c in sorted_chars]
+
+
+@public_cache(cdn_seconds=86400 * 7, browser_seconds=3600)
+def deck_og_image(request, player, event, deck_index=1):
+    """Serve dynamic Open Graph PNG image for a player's tournament decklist."""
+    player_lower = player.strip().lower()
+    tournament = get_object_or_404(Tournament, id=event)
+
+    decks = list(
+        Deck.objects.filter(tournament=tournament, player_lower=player_lower).order_by(
+            "id"
+        )
+    )
+    if not decks:
+        raise Http404("Deck not found.")
+
+    idx = max(0, min(deck_index - 1, len(decks) - 1))
+    deck = decks[idx]
+
+    mb_counts: dict[str, int] = {}
+    for item in deck.mainboard or []:
+        c_name = (item.get("card") or "").strip()
+        c_count = int(item.get("count", 1))
+        if c_name and c_count > 0:
+            mb_counts[c_name] = mb_counts.get(c_name, 0) + c_count
+
+    cards_map = get_cards_map(set(mb_counts.keys()))
+    idf_map = get_card_idf_map()
+
+    ranked_mainboard = []
+    curve_buckets = [0, 0, 0, 0, 0, 0]
+    total_nonland_cmc = 0.0
+    nonland_count = 0
+    land_count = 0
+
+    for c_name, count in mb_counts.items():
+        card_obj = cards_map.get(c_name)
+        norm = normalize_card_name(c_name)
+        idf = idf_map.get(norm, 1.0)
+
+        # Weight by linear copy count capped at 4 so 3-4 ofs beat 1-ofs,
+        # while high-IDF 3-ofs or lands can still beat generic staples.
+        effective_copies = min(max(count, 1), 4)
+        tfidf_weight = effective_copies * idf
+
+        is_land = bool(card_obj and card_obj.is_land)
+        if is_land:
+            land_count += count
+        else:
+            cmc_val = float(card_obj.cmc) if card_obj and card_obj.cmc else 0.0
+            nonland_count += count
+            total_nonland_cmc += cmc_val * count
+            bucket_idx = min(5, max(0, int(round(cmc_val))))
+            curve_buckets[bucket_idx] += count
+
+        ranked_mainboard.append(
+            {
+                "name": c_name,
+                "count": count,
+                "weight": tfidf_weight,
+                "idf": idf,
+                "card_obj": card_obj,
+                "is_land": is_land,
+            }
+        )
+
+    ranked_mainboard.sort(key=lambda x: (-x["weight"], -x["count"], x["name"]))
+
+    spotlight_entry = ranked_mainboard[0] if ranked_mainboard else None
+    spotlight_card_obj = spotlight_entry["card_obj"] if spotlight_entry else None
+    spotlight_name = spotlight_entry["name"] if spotlight_entry else deck.archetype
+    spotlight_count = spotlight_entry["count"] if spotlight_entry else 0
+    image_data_uri = _fetch_card_image_data_uri(spotlight_card_obj)
+
+    avg_cmc = (
+        f"{total_nonland_cmc / nonland_count:.2f}" if nonland_count > 0 else "0.00"
+    )
+
+    # Build mana curve bar geometry (6 bars inside 220x72 card)
+    max_bucket = max(curve_buckets) if any(curve_buckets) else 1
+    curve_labels = ["0", "1", "2", "3", "4", "5+"]
+    curve_bars = []
+    for b_idx, b_cnt in enumerate(curve_buckets):
+        bx = 22 + b_idx * 31
+        bar_h = int(round((b_cnt / max_bucket) * 24)) if b_cnt > 0 else 2
+        by = 54 - bar_h
+        curve_bars.append(
+            {
+                "x": bx,
+                "y": by,
+                "width": 20,
+                "height": bar_h,
+                "center_x": bx + 10,
+                "count": b_cnt,
+                "label": curve_labels[b_idx],
+                "fill": "#10b981" if b_cnt > 0 else "#27272a",
+            }
+        )
+
+    # Format 2 columns of up to 7 cards each (14 total)
+    max_rows_per_col = 7
+    max_display = max_rows_per_col * 2
+    overflow_unique = max(0, len(ranked_mainboard) - max_display)
+    visible_entries = (
+        ranked_mainboard[: max_display - 1]
+        if overflow_unique > 0
+        else ranked_mainboard[:max_display]
+    )
+
+    def _format_card_row(entry: dict, row_idx: int, is_first: bool) -> dict:
+        c_name = entry["name"]
+        short_name = c_name[:27] + "…" if len(c_name) > 28 else c_name
+        syms = _extract_card_mana_symbols(entry["card_obj"])
+        sym_items = []
+        total_syms = len(syms)
+        for s_idx, sym_id in enumerate(syms):
+            # Right-align symbols ending at x=326
+            sx = 326 - (total_syms - s_idx) * 18
+            sym_items.append({"id": sym_id, "x": sx})
+        return {
+            "y": 16 + row_idx * 29,
+            "count": entry["count"],
+            "name": short_name,
+            "is_spotlight": is_first,
+            "is_land": entry["is_land"],
+            "symbols": sym_items,
+        }
+
+    col1_cards = [
+        _format_card_row(e, i, i == 0)
+        for i, e in enumerate(visible_entries[:max_rows_per_col])
+    ]
+    col2_cards = [
+        _format_card_row(e, i, False)
+        for i, e in enumerate(visible_entries[max_rows_per_col:])
+    ]
+    overflow_row = None
+    if overflow_unique > 0:
+        overflow_all_count = sum(
+            e["count"] for e in ranked_mainboard[max_display - 1 :]
+        )
+        overflow_row = {
+            "y": 16 + len(col2_cards) * 29,
+            "label": f"+{overflow_unique} more unique cards ({overflow_all_count} copies)",
+        }
+
+    fmt_slug = deck.format.lower().strip()
+    format_name = (
+        FORMATS[fmt_slug].name if fmt_slug in FORMATS else fmt_slug.capitalize()
+    )
+
+    mana_pill = build_mana_pill(deck.colors)
+    if mana_pill:
+        mana_pill["y"] = 122
+
+    # Result styling
+    record_str = deck.record_display
+    if deck.is_top8:
+        result_label = "CHALLENGE TOP 8"
+        result_value = deck.result or (f"#{deck.rank}" if deck.rank else "Top 8")
+        result_sub = f"({record_str})" if record_str else "Top 8 Finish"
+        result_color = "#10b981"
+    elif deck.is_5_0:
+        result_label = "LEAGUE RESULT"
+        result_value = "5-0 Trophy"
+        result_sub = "Undefeated"
+        result_color = "#38bdf8"
+    else:
+        result_label = "EVENT RESULT"
+        result_value = deck.result or (f"#{deck.rank}" if deck.rank else "Entry")
+        result_sub = f"({record_str})" if record_str else ""
+        result_color = "#ffffff"
+
+    archetype_display = (
+        deck.archetype[:24] + "…" if len(deck.archetype) > 25 else deck.archetype
+    )
+    tourn_name = tournament.name
+    if len(tourn_name) > 36:
+        tourn_name = tourn_name[:35] + "…"
+    tourn_date = tournament.date.isoformat() if tournament.date else ""
+
+    return render_og_png(
+        "og/deck_og.svg",
+        {
+            "deck": deck,
+            "tournament": tournament,
+            "format_name": format_name,
+            "archetype_display": archetype_display,
+            "tourn_name": tourn_name,
+            "tourn_date": tourn_date,
+            "mana_pill": mana_pill,
+            "spotlight_name": spotlight_name,
+            "spotlight_count": spotlight_count,
+            "image_data_uri": image_data_uri,
+            "result_label": result_label,
+            "result_value": result_value,
+            "result_sub": result_sub,
+            "result_color": result_color,
+            "mainboard_count": deck.mainboard_card_count,
+            "sideboard_count": deck.sideboard_card_count,
+            "land_count": land_count,
+            "avg_cmc": avg_cmc,
+            "curve_bars": curve_bars,
+            "col1_cards": col1_cards,
+            "col2_cards": col2_cards,
+            "overflow_row": overflow_row,
         },
         request=request,
     )

@@ -3,11 +3,13 @@
 import json
 import re
 from datetime import date
+from unittest.mock import patch
 
 import pytest
 from django.template.loader import render_to_string
 from django.test import Client
 
+from core.models import Card
 from core.models import Deck
 from core.models import Match
 from core.models import Tournament
@@ -683,3 +685,70 @@ def test_robots_txt_sitemap_reference(client):
     assert response.status_code == 200
     content = response.content.decode("utf-8")
     assert "Sitemap: https://modometa.com/sitemap.xml" in content
+
+
+@pytest.mark.django_db
+def test_deck_detail_seo_and_og_image_view(client, sample_data):
+    """Test deck detail OG image links and dynamic deck_og_image PNG rendering."""
+    tourn, deck = sample_data
+    Card.objects.create(
+        id="card-murktide-test",
+        oracle_id="oracle-murktide-test",
+        name="Murktide Regent",
+        slug="murktide-regent",
+        normalized_name="murktide regent",
+        mana_cost="{5}{U}{U}",
+        cmc=7.0,
+        type_line="Creature — Dragon",
+        colors=["U"],
+        color_identity=["U"],
+        is_land=False,
+    )
+
+    # 1. Check deck_detail HTML links to deck_og_image
+    detail_resp = client.get(f"/player/{deck.player}/deck/{tourn.id}/")
+    assert detail_resp.status_code == 200
+    detail_html = detail_resp.content.decode("utf-8")
+    assert f"/player/{deck.player}/deck/{tourn.id}/og.png" in detail_html
+
+    # 2. Check deck_og_image renders valid PNG
+    with patch("core.views.opengraph._fetch_card_image_data_uri", return_value=None):
+        og_resp = client.get(f"/player/{deck.player}/deck/{tourn.id}/og.png")
+    assert og_resp.status_code == 200
+    assert og_resp["Content-Type"] == "image/png"
+    assert og_resp.content[:4] == b"\x89PNG"
+    assert len(og_resp.content) > 1000
+
+    # 3. Disambiguated second deck by same player in same event
+    deck2 = Deck.objects.create(
+        id="legacy_challenge_test_01_deck_2",
+        tournament=tourn,
+        format="legacy",
+        player="LoggySD",
+        player_lower="loggysd",
+        archetype="Reanimator",
+        archetype_slug="reanimator",
+        color_name="Dimir",
+        colors="UB",
+        mainboard=[{"card": "Reanimate", "count": 4}],
+        sideboard=[{"card": "Force of Will", "count": 4}],
+        result="5-0",
+        is_5_0=True,
+    )
+    detail2_resp = client.get(f"/player/{deck2.player}/deck/{tourn.id}/2/")
+    assert detail2_resp.status_code == 200
+    detail2_html = detail2_resp.content.decode("utf-8")
+    assert f"/player/{deck2.player}/deck/{tourn.id}/2/og.png" in detail2_html
+
+    with patch("core.views.opengraph._fetch_card_image_data_uri", return_value=None):
+        og2_resp = client.get(f"/player/{deck2.player}/deck/{tourn.id}/2/og.png")
+    assert og2_resp.status_code == 200
+    assert og2_resp["Content-Type"] == "image/png"
+    assert og2_resp.content[:4] == b"\x89PNG"
+
+    # 4. Non-existent player or event returns 404
+    assert client.get(f"/player/NonExistent/deck/{tourn.id}/og.png").status_code == 404
+    assert (
+        client.get(f"/player/{deck.player}/deck/unknown_event/og.png").status_code
+        == 404
+    )
