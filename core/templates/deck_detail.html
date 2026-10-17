@@ -5,8 +5,12 @@
 {% block meta_description %}{{ deck.player }}'s {{ deck.archetype }} decklist from {{ tournament.name }} ({{ tournament.date|date:"F j, Y" }}). Complete mainboard, sideboard, and card statistics.{% endblock %}
 {% block og_title %}{{ deck.player }}'s {{ deck.archetype }} — {{ SITE_NAME }}{% endblock %}
 {% block og_description %}{{ deck.player }}'s {{ deck.archetype }} decklist from {{ tournament.name }} ({{ tournament.date|date:"F j, Y" }}). Complete mainboard, sideboard, and card statistics.{% endblock %}
+{% block og_image %}{{ request.scheme }}://{{ request.get_host }}{% if deck_index and deck_index > 1 %}{% url 'core:deck_og_image_disambiguated' deck.player tournament.id deck_index %}{% else %}{% url 'core:deck_og_image' deck.player tournament.id %}{% endif %}{% endblock %}
+{% block og_image_alt %}{{ deck.player }}'s {{ deck.archetype }} decklist from {{ tournament.name }} on {{ SITE_NAME }}{% endblock %}
 {% block twitter_title %}{{ deck.player }}'s {{ deck.archetype }} — {{ SITE_NAME }}{% endblock %}
 {% block twitter_description %}{{ deck.player }}'s {{ deck.archetype }} decklist from {{ tournament.name }} ({{ tournament.date|date:"F j, Y" }}). Complete mainboard, sideboard, and card statistics.{% endblock %}
+{% block twitter_image %}{{ request.scheme }}://{{ request.get_host }}{% if deck_index and deck_index > 1 %}{% url 'core:deck_og_image_disambiguated' deck.player tournament.id deck_index %}{% else %}{% url 'core:deck_og_image' deck.player tournament.id %}{% endif %}{% endblock %}
+{% block twitter_image_alt %}{{ deck.player }}'s {{ deck.archetype }} decklist from {{ tournament.name }} on {{ SITE_NAME }}{% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json">

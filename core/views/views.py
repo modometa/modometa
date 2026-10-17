@@ -796,6 +796,7 @@ def deck_detail(request, player, event, deck_index=1):
         "deck_detail.html",
         {
             "deck": deck,
+            "deck_index": idx + 1,
             "tournament": tournament,
             "deck_text": deck_text,
             "mainboard_sections": mainboard_sections,

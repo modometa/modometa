@@ -1,0 +1,110 @@
+{% extends "og/base_og.svg" %}
+
+{% block badge %}
+  <rect x="880" y="42" width="260" height="34" rx="17" fill="#18181b" stroke="#27272a" stroke-width="1.5"/>
+  <text x="1010" y="64" class="font-mono" font-size="12" font-weight="700" fill="#34d399" text-anchor="middle" letter-spacing="0.08em">{{ format_name|upper }} DECKLIST</text>
+{% endblock %}
+
+{% block content %}
+  <!-- Left Column: Spotlight Card Artwork -->
+  <g transform="translate(70, 118)">
+    <rect x="-2" y="-2" width="314" height="438" rx="18" fill="#18181b" stroke="#27272a" stroke-width="2"/>
+    {% if image_data_uri %}
+      <clipPath id="deck-og-card-clip">
+        <rect x="0" y="0" width="310" height="434" rx="16"/>
+      </clipPath>
+      <image href="{{ image_data_uri }}" x="0" y="0" width="310" height="434" clip-path="url(#deck-og-card-clip)" preserveAspectRatio="xMidYMid slice"/>
+    {% else %}
+      <rect x="0" y="0" width="310" height="434" rx="16" fill="#121214"/>
+      <text x="155" y="205" font-size="56" text-anchor="middle" fill="#71717a">🎴</text>
+      <text x="155" y="255" class="font-sans" font-size="17" font-weight="600" text-anchor="middle" fill="#a1a1aa">{{ spotlight_name }}</text>
+    {% endif %}
+  </g>
+
+  <!-- Right Column: Deck Metadata, Stats & Curve, and Key Cards -->
+  <g transform="translate(420, 0)">
+    <!-- Archetype Title & Mana Pill -->
+    <text x="0" y="156" class="font-sans" font-size="38" font-weight="800" fill="#ffffff">{{ archetype_display }}</text>
+
+    {% if mana_pill %}
+      <g transform="translate({{ mana_pill.x|add:"-420" }}, {{ mana_pill.y }})">
+        <rect x="0" y="0" width="{{ mana_pill.width }}" height="{{ mana_pill.height }}" rx="20" fill="#18181b" stroke="#27272a" stroke-width="1.5"/>
+        {% for s in mana_pill.symbols %}
+          <use href="#{{ s.id }}" x="{{ s.x }}" y="{{ s.y }}" width="28" height="28"/>
+        {% endfor %}
+      </g>
+    {% endif %}
+
+    <!-- Player & Tournament Subtitle -->
+    <text x="0" y="190" class="font-sans" font-size="16" fill="#a1a1aa">Played by <tspan fill="#34d399" font-weight="700">{{ deck.player }}</tspan> • {{ tourn_name }}{% if tourn_date %} ({{ tourn_date }}){% endif %}</text>
+
+    <!-- Stat Cards Row (3 cards across 720px) -->
+    <g transform="translate(0, 212)">
+      <!-- Result Card -->
+      <rect x="0" y="0" width="226" height="74" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+      <text x="16" y="23" class="font-mono" font-size="10" font-weight="600" fill="#71717a" letter-spacing="0.05em">{{ result_label }}</text>
+      {% if result_sub %}
+        <text x="210" y="23" class="font-mono" font-size="10" fill="#a1a1aa" text-anchor="end">{{ result_sub }}</text>
+      {% endif %}
+      <text x="16" y="54" class="font-mono" font-size="22" font-weight="700" fill="{{ result_color }}">{{ result_value }}</text>
+
+      <!-- Deck Composition Card -->
+      <rect x="247" y="0" width="226" height="74" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+      <text x="263" y="23" class="font-mono" font-size="10" font-weight="600" fill="#71717a" letter-spacing="0.05em">DECKLIST</text>
+      <text x="457" y="23" class="font-mono" font-size="10" fill="#a1a1aa" text-anchor="end">{{ land_count }} Lands</text>
+      <text x="263" y="54" class="font-mono" font-size="22" font-weight="700" fill="#ffffff">{{ mainboard_count }} / {{ sideboard_count }}</text>
+      <text x="457" y="53" class="font-mono" font-size="11" fill="#71717a" text-anchor="end">Main / Side</text>
+
+      <!-- Mana Curve Mini-Chart Card -->
+      <g transform="translate(494, 0)">
+        <rect x="0" y="0" width="226" height="74" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+        <text x="16" y="22" class="font-mono" font-size="10" font-weight="600" fill="#71717a" letter-spacing="0.05em">MANA CURVE</text>
+        <text x="210" y="22" class="font-mono" font-size="10" font-weight="700" fill="#34d399" text-anchor="end">AVG {{ avg_cmc }}</text>
+        {% for bar in curve_bars %}
+          <rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}" rx="2" fill="{{ bar.fill }}"/>
+          <text x="{{ bar.center_x }}" y="66" class="font-mono" font-size="9" fill="#71717a" text-anchor="middle">{{ bar.label }}</text>
+        {% endfor %}
+      </g>
+    </g>
+
+    <!-- Key Mainboard Cards Label & 2-Column Grid -->
+    <text x="0" y="314" class="font-mono" font-size="11" font-weight="600" fill="#71717a" letter-spacing="0.08em">KEY MAINBOARD CARDS (RANKED BY TF-IDF SIGNIFICANCE)</text>
+    <g transform="translate(0, 326)">
+      <rect x="0" y="0" width="720" height="226" rx="14" fill="#18181b" stroke="#27272a" stroke-width="1.5"/>
+      <line x1="360" y1="14" x2="360" y2="212" stroke="#27272a" stroke-width="1"/>
+
+      <!-- Column 1 -->
+      <g transform="translate(16, 0)">
+        {% for row in col1_cards %}
+          <g transform="translate(0, {{ row.y }})">
+            <rect x="0" y="0" width="26" height="20" rx="4" fill="{% if row.is_spotlight %}#064e3b{% else %}#27272a{% endif %}"/>
+            <text x="13" y="14" class="font-mono" font-size="11" font-weight="700" fill="{% if row.is_spotlight %}#34d399{% else %}#a1a1aa{% endif %}" text-anchor="middle">{{ row.count }}x</text>
+            <text x="34" y="15" class="font-sans" font-size="13" font-weight="{% if row.is_spotlight %}700{% else %}500{% endif %}" fill="{% if row.is_spotlight %}#34d399{% else %}#e4e4e7{% endif %}">{{ row.name }}</text>
+            {% for s in row.symbols %}
+              <use href="#{{ s.id }}" x="{{ s.x }}" y="2" width="15" height="15"/>
+            {% endfor %}
+          </g>
+        {% endfor %}
+      </g>
+
+      <!-- Column 2 -->
+      <g transform="translate(376, 0)">
+        {% for row in col2_cards %}
+          <g transform="translate(0, {{ row.y }})">
+            <rect x="0" y="0" width="26" height="20" rx="4" fill="#27272a"/>
+            <text x="13" y="14" class="font-mono" font-size="11" font-weight="700" fill="#a1a1aa" text-anchor="middle">{{ row.count }}x</text>
+            <text x="34" y="15" class="font-sans" font-size="13" font-weight="500" fill="#e4e4e7">{{ row.name }}</text>
+            {% for s in row.symbols %}
+              <use href="#{{ s.id }}" x="{{ s.x }}" y="2" width="15" height="15"/>
+            {% endfor %}
+          </g>
+        {% endfor %}
+        {% if overflow_row %}
+          <g transform="translate(0, {{ overflow_row.y }})">
+            <text x="0" y="15" class="font-mono" font-size="11" fill="#71717a">{{ overflow_row.label }}</text>
+          </g>
+        {% endif %}
+      </g>
+    </g>
+  </g>
+{% endblock %}

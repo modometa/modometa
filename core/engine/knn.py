@@ -598,6 +598,58 @@ def build_knn_index(
 _GLOBAL_INDEX: "DeckKNNIndex | None" = None
 _GLOBAL_INDEX_LOADED: bool = False
 _GLOBAL_INDEX_MTIME: float = 0.0
+_CARD_IDF_MAP: dict[str, float] | None = None
+_CARD_IDF_MTIME: float = 0.0
+
+
+def get_card_idf_map() -> dict[str, float]:
+    """Return a lightweight mapping of normalized card name -> IDF weight.
+
+    If the full global kNN index is already loaded in memory, extracts IDFs from it.
+    Otherwise reads only the 'vocab' and 'idf' arrays (~34 KB) from knn_index.npz
+    without loading the ~280 MB sparse TF-IDF matrix into worker memory.
+    """
+    global _CARD_IDF_MAP, _CARD_IDF_MTIME
+
+    if _GLOBAL_INDEX_LOADED:
+        if (
+            _GLOBAL_INDEX is not None
+            and _GLOBAL_INDEX.transformer is not None
+            and hasattr(_GLOBAL_INDEX.transformer, "idf_")
+            and _GLOBAL_INDEX.vocab
+        ):
+            idf_arr = _GLOBAL_INDEX.transformer.idf_
+            return {
+                str(card): float(idf_arr[idx])
+                for card, idx in _GLOBAL_INDEX.vocab.items()
+            }
+        return {}
+
+    index_path = getattr(
+        settings, "KNN_INDEX_PATH", Path(settings.BASE_DIR) / "data" / "knn_index.npz"
+    )
+    p = Path(index_path)
+    if not p.exists():
+        return {}
+
+    try:
+        current_mtime = p.stat().st_mtime
+    except OSError:
+        current_mtime = 0.0
+
+    if _CARD_IDF_MAP is not None and current_mtime <= _CARD_IDF_MTIME:
+        return _CARD_IDF_MAP
+
+    try:
+        with np.load(p, allow_pickle=False) as f:
+            vocab = f["vocab"]
+            idf = f["idf"]
+            _CARD_IDF_MAP = {str(card): float(val) for card, val in zip(vocab, idf)}
+            _CARD_IDF_MTIME = current_mtime
+            return _CARD_IDF_MAP
+    except Exception as exc:
+        logger.debug("Failed to load lightweight IDF map from %s: %s", p, exc)
+        return {}
 
 
 def get_global_knn_index(force_reload: bool = False) -> DeckKNNIndex | None:
@@ -659,9 +711,10 @@ def get_global_knn_index(force_reload: bool = False) -> DeckKNNIndex | None:
 
 def set_global_knn_index(index: DeckKNNIndex | None, loaded: bool = True) -> None:
     """Set the global in-memory kNN index singleton."""
-    global _GLOBAL_INDEX, _GLOBAL_INDEX_LOADED, _GLOBAL_INDEX_MTIME
+    global _GLOBAL_INDEX, _GLOBAL_INDEX_LOADED, _GLOBAL_INDEX_MTIME, _CARD_IDF_MAP
     _GLOBAL_INDEX = index
     _GLOBAL_INDEX_LOADED = loaded
+    _CARD_IDF_MAP = None
     if index is not None:
         index_path = getattr(
             settings,

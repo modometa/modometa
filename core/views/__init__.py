@@ -20,6 +20,7 @@ from core.views.opengraph import archetype_og_image
 from core.views.opengraph import build_mana_pill
 from core.views.opengraph import build_matrix_og_data
 from core.views.opengraph import card_og_image
+from core.views.opengraph import deck_og_image
 from core.views.opengraph import default_og_image
 from core.views.opengraph import format_matrix_og_image
 from core.views.opengraph import format_og_image
@@ -84,6 +85,7 @@ __all__ = [
     "cards_list",
     "classify_card_type",
     "deck_detail",
+    "deck_og_image",
     "default_og_image",
     "faq",
     "format_matrix_og_image",
